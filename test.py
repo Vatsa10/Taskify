@@ -1,7 +1,3 @@
-"""
-Test Script for Task Assignment Pipeline
-Comprehensive tests for all agents and the full pipeline
-"""
 
 import asyncio
 import sys
