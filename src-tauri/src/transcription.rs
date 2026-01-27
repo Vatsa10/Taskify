@@ -1,4 +1,3 @@
-use anyhow::Result;
 use ringbuf::{Consumer, SharedRb};
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter};

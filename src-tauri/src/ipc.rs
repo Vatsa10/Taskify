@@ -1,11 +1,17 @@
-use tauri::{AppHandle, State, Runtime};
+use tauri::{AppHandle, State, Emitter};
 use std::sync::Mutex;
 use crate::audio::AudioSystem;
 use crate::transcription::run_transcription_loop;
 use tracing::{info, error};
 
+// cpal::Stream is not Send on Windows because of *mut () raw pointers in WASAPI.
+// Since we only hold it to drop it later (not accessing it safely across threads),
+// we can wrap it.
+pub struct SendStream(pub cpal::Stream);
+unsafe impl Send for SendStream {}
+
 pub struct RecordingState {
-    pub stream: Option<cpal::Stream>,
+    pub stream: Option<SendStream>,
     pub abort_handle: Option<tokio::task::AbortHandle>,
 }
 
@@ -41,7 +47,7 @@ pub async fn start_recording(state: State<'_, AppState>, app: AppHandle) -> Resu
     // Spawn transcription task
     let handle = tokio::spawn(run_transcription_loop(consumer, sample_rate, channels, app.clone()));
     
-    recording.stream = Some(stream);
+    recording.stream = Some(SendStream(stream));
     recording.abort_handle = Some(handle.abort_handle());
     
     info!("Recording started successfully");
@@ -58,8 +64,8 @@ pub async fn stop_recording(state: State<'_, AppState>, app: AppHandle) -> Resul
     let mut recording = state.recording.lock().map_err(|e| e.to_string())?;
     
     // Stop audio
-    if let Some(stream) = recording.stream.take() {
-        drop(stream); 
+    if let Some(wrapped_stream) = recording.stream.take() {
+        drop(wrapped_stream.0); 
     }
     
     // Stop transcription task
