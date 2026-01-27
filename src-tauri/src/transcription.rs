@@ -55,7 +55,7 @@ pub async fn run_transcription_loop(
     // Connect to Deepgram
     // encoding=linear16 means raw PCM 16-bit signed little-endian
     let url_str = format!(
-        "wss://api.deepgram.com/v1/listen?encoding=linear16&sample_rate={}&channels={}&smart_format=true&interim_results=true",
+        "wss://api.deepgram.com/v1/listen?model=nova-2&encoding=linear16&sample_rate={}&channels={}&smart_format=true&interim_results=true",
         input_sample_rate, input_channels
     );
     let url = Url::parse(&url_str).expect("Invalid Deepgram URL");
