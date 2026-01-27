@@ -44,6 +44,7 @@ pub async fn run_transcription_loop(
     dotenvy::dotenv().ok();
     
     let api_key = env::var("DEEPGRAM_API_KEY").unwrap_or_default();
+    info!("Deepgram API Key found: {}", !api_key.is_empty());
     if api_key.is_empty() {
         error!("DEEPGRAM_API_KEY not found in environment variables");
         app_handle.emit("status", "error: missing api key").ok();
@@ -60,9 +61,18 @@ pub async fn run_transcription_loop(
     );
     let url = Url::parse(&url_str).expect("Invalid Deepgram URL");
 
+    use tokio_tungstenite::tungstenite::handshake::client::generate_key;
+    
+    let host = url.host_str().expect("URL missing host");
+    
     let req = tokio_tungstenite::tungstenite::handshake::client::Request::builder()
         .uri(url.as_str())
         .header("Authorization", format!("Token {}", api_key))
+        .header("Host", host)
+        .header("Connection", "Upgrade")
+        .header("Upgrade", "websocket")
+        .header("Sec-WebSocket-Version", "13")
+        .header("Sec-WebSocket-Key", generate_key())
         .body(())
         .unwrap();
 
@@ -71,7 +81,7 @@ pub async fn run_transcription_loop(
         Ok(s) => s,
         Err(e) => {
             error!("Failed to connect to Deepgram: {}", e);
-            app_handle.emit("status", "error: connection failed").ok();
+            app_handle.emit("status", format!("error: connection failed - {}", e)).ok();
             return;
         }
     };
@@ -110,28 +120,6 @@ pub async fn run_transcription_loop(
             _ = ticker.tick() => {
                 let available = consumer.len();
                 if available > 0 {
-                     // We grab chunks
-                     // Note: iter() on consumer is not straightforward for slices.
-                     // We used unsafe advance which is efficient but we need to READ first.
-                     // IMPORTANT: ringbuf `pop_iter` or `pop_slice`.
-                     // Since we need to convert to i16, we iterate.
-                     
-                     // To avoid locking too long, limit chunk size?
-                     // 48000Hz * 0.05s = 2400 samples.
-                     // let chunk_size = std::cmp::min(available, 4800);
-                     
-                     // Ideally we pop into a temp buffer.
-                     // let mut f32_chunk = vec![0.0; chunk_size];
-                     // consumer.pop_slice(&mut f32_chunk);
-                     
-                     // Better: use iterator directly if possible, or simple loop
-                     // Simple loop popping one by one is slow.
-                     // Consumer implements iter() that yields items? No.
-                     // Use `pop_iter`
-                     
-                     // Optimization: Use slices if possible.
-                     // consumer.as_slices() returns (&[T], &[T]).
-                     
                      let (head, tail) = consumer.as_slices();
                      let head_len = head.len();
                      let tail_len = tail.len();
@@ -150,8 +138,9 @@ pub async fn run_transcription_loop(
                      // Advance consumer
                      unsafe { consumer.advance(head_len + tail_len); }
                      
-                     // Send data if buffer is big enough
-                     if !audio_buffer.is_empty() {
+                     // Only send if we have enough data (e.g. 100ms @ 48kHz = 4800 samples)
+                     // This prevents sending tiny packets and respects rate guidelines.
+                     if audio_buffer.len() >= 4800 {
                          // Convert Vec<i16> to Vec<u8> (bytes)
                          let mut byte_data = Vec::with_capacity(audio_buffer.len() * 2);
                          for sample in &audio_buffer {
@@ -162,7 +151,6 @@ pub async fn run_transcription_loop(
                              Ok(_) => {},
                              Err(e) => {
                                  error!("WS Send Error: {}", e);
-                                 // break; // Optionally break or retry
                              }
                          }
                          audio_buffer.clear();

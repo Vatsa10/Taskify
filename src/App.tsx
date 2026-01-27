@@ -16,56 +16,52 @@ function App() {
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    let unlistenPartial: Promise<() => void>;
-    let unlistenFinal: Promise<() => void>;
-    let unlistenStatus: Promise<() => void>;
+    const unlistenFns: Array<() => void> = [];
 
     const setupListeners = async () => {
-      unlistenPartial = listen("transcript_partial", (event: any) => {
+      const u1 = await listen("transcript_partial", (event: any) => {
         const payload = event.payload as TranscriptSegment;
         setTranscript((prev) => {
           const last = prev[prev.length - 1];
-          // If the last segment is partial, replace it with the new update
           if (last && !last.is_final) {
             return [...prev.slice(0, -1), payload];
           }
-          // Otherwise append
           return [...prev, payload];
         });
       });
+      unlistenFns.push(u1);
 
-      unlistenFinal = listen("transcript_final", (event: any) => {
+      const u2 = await listen("transcript_final", (event: any) => {
         const payload = event.payload as TranscriptSegment;
         setTranscript((prev) => {
           const last = prev[prev.length - 1];
-          // Replace the partial placeholder with the final segment
           if (last && !last.is_final) {
-             return [...prev.slice(0, -1), payload];
+            return [...prev.slice(0, -1), payload];
           }
           return [...prev, payload];
         });
       });
-      
-      unlistenStatus = listen("status", (event: any) => {
-          setStatus(event.payload as string);
-          if (event.payload === "stopped") setIsRecording(false);
-          if (event.payload === "recording") setIsRecording(true);
+      unlistenFns.push(u2);
+
+      const u3 = await listen("status", (event: any) => {
+        setStatus(event.payload as string);
+        if (event.payload === "stopped") setIsRecording(false);
+        if (event.payload === "recording") setIsRecording(true);
       });
+      unlistenFns.push(u3);
     };
 
     setupListeners();
 
     return () => {
-      if (unlistenPartial) unlistenPartial.then((f) => f());
-      if (unlistenFinal) unlistenFinal.then((f) => f());
-      if (unlistenStatus) unlistenStatus.then((f) => f());
+      unlistenFns.forEach(fn => fn());
     };
   }, []);
 
   useEffect(() => {
-      if (scrollRef.current) {
-          scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-      }
+    if (scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    }
   }, [transcript]);
 
   async function toggleRecording() {
@@ -92,25 +88,25 @@ function App() {
       <header>
         <h1>Meeting Assistant</h1>
         <div className="indicator-wrapper">
-            <div className={`indicator ${isRecording ? "active" : ""}`}></div>
-            <span>{status}</span>
+          <div className={`indicator ${isRecording ? "active" : ""}`}></div>
+          <span>{status}</span>
         </div>
       </header>
-      
+
       <div className="transcript-box" ref={scrollRef}>
         {transcript.length === 0 && <div className="placeholder">Start recording to see live transcription...</div>}
         {transcript.map((seg, i) => (
           <div key={i} className={`segment ${seg.is_final ? "final" : "partial"}`}>
-            <span className="timestamp">{new Date(seg.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit', second:'2-digit'})}</span>
+            <span className="timestamp">{new Date(seg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</span>
             <p className="text">{seg.text}</p>
           </div>
         ))}
       </div>
 
       <div className="controls">
-        <button 
-            onClick={toggleRecording}
-            className={`record-btn ${isRecording ? "stop" : "start"}`}
+        <button
+          onClick={toggleRecording}
+          className={`record-btn ${isRecording ? "stop" : "start"}`}
         >
           {isRecording ? "Stop Recording" : "Start Recording"}
         </button>

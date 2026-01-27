@@ -32,7 +32,7 @@ anyhow = "1.0"
 crossbeam-queue = "0.3"
 dashmap = "6.0"
 tracing = "0.1"
-tokio-tungstenite = { version = "0.21", features = ["native-tls"] }
+tokio-tungstenite = { version = "0.21", features = ["native-tls-vendored"] }
 futures = "0.3"
 dotenvy = "0.15"
 url = "2.5"
