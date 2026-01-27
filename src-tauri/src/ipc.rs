@@ -1,7 +1,8 @@
 use tauri::{AppHandle, State, Emitter};
 use std::sync::Mutex;
+use tokio::sync::mpsc;
 use crate::audio::AudioSystem;
-use crate::transcription::run_transcription_loop;
+use crate::transcription::{run_transcription_loop, TranscriptionCommand};
 use tracing::{info, error};
 
 // cpal::Stream is not Send on Windows because of *mut () raw pointers in WASAPI.
@@ -12,7 +13,7 @@ unsafe impl Send for SendStream {}
 
 pub struct RecordingState {
     pub stream: Option<SendStream>,
-    pub abort_handle: Option<tokio::task::AbortHandle>,
+    pub cmd_tx: Option<mpsc::Sender<TranscriptionCommand>>,
 }
 
 pub struct AppState {
@@ -24,7 +25,7 @@ impl AppState {
         Self {
             recording: Mutex::new(RecordingState {
                 stream: None,
-                abort_handle: None,
+                cmd_tx: None,
             }),
         }
     }
@@ -44,11 +45,14 @@ pub async fn start_recording(state: State<'_, AppState>, app: AppHandle) -> Resu
     // Start audio capture
     let (stream, sample_rate, channels) = audio_sys.start_capture().map_err(|e| e.to_string())?;
     
+    // Create command channel
+    let (tx, rx) = mpsc::channel(10);
+
     // Spawn transcription task
-    let handle = tokio::spawn(run_transcription_loop(consumer, sample_rate, channels, app.clone()));
+    tokio::spawn(run_transcription_loop(consumer, sample_rate, channels, app.clone(), rx));
     
     recording.stream = Some(SendStream(stream));
-    recording.abort_handle = Some(handle.abort_handle());
+    recording.cmd_tx = Some(tx);
     
     info!("Recording started successfully");
     
@@ -61,16 +65,22 @@ pub async fn start_recording(state: State<'_, AppState>, app: AppHandle) -> Resu
 #[tauri::command]
 pub async fn stop_recording(state: State<'_, AppState>, app: AppHandle) -> Result<(), String> {
     info!("Received stop_recording command");
-    let mut recording = state.recording.lock().map_err(|e| e.to_string())?;
     
-    // Stop audio
-    if let Some(wrapped_stream) = recording.stream.take() {
-        drop(wrapped_stream.0); 
-    }
-    
-    // Stop transcription task
-    if let Some(abort_handle) = recording.abort_handle.take() {
-        abort_handle.abort();
+    let cmd_tx = {
+        let mut recording = state.recording.lock().map_err(|e| e.to_string())?;
+        
+        // Stop audio
+        if let Some(wrapped_stream) = recording.stream.take() {
+            drop(wrapped_stream.0); 
+        }
+        
+        recording.cmd_tx.take()
+    };
+
+    if let Some(tx) = cmd_tx {
+        if let Err(e) = tx.send(TranscriptionCommand::Stop).await {
+            error!("Failed to send stop command to transcription task: {}", e);
+        }
     }
     
     info!("Recording stopped");
