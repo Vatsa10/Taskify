@@ -141,6 +141,14 @@ pub async fn run_transcription_loop(
                      // Only send if we have enough data (e.g. 100ms @ 48kHz = 4800 samples)
                      // This prevents sending tiny packets and respects rate guidelines.
                      if audio_buffer.len() >= 4800 {
+                         // Debug: Check signal level
+                         let peak = audio_buffer.iter().map(|&s| s.abs()).max().unwrap_or(0);
+                         if peak < 50 {
+                             info!("Audio buffer contains silence (Peak: {}/32767). Play some audio!", peak);
+                         } else {
+                             info!("Sending {} samples to Deepgram (Peak: {})", audio_buffer.len(), peak);
+                         }
+
                          // Convert Vec<i16> to Vec<u8> (bytes)
                          let mut byte_data = Vec::with_capacity(audio_buffer.len() * 2);
                          for sample in &audio_buffer {
